@@ -1,0 +1,111 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build unsigned IPA (Unity 2022.3)
+    runs-on: macos-15
+    timeout-minutes: 300
+
+    env:
+      PROJECT: Unity-iPhone.xcodeproj
+      SCHEME: Unity-iPhone
+      OUT_DIR: ${{ runner.temp }}/out
+      IPA_NAME: NroNox.ipa
+
+    steps:
+      - name: Checkout (with Git LFS)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 1
+
+      - name: Toolchain info
+        run: |
+          set -e
+          uname -m
+          xcodebuild -version
+          xcodebuild -list -project "$PROJECT"
+          df -h /
+
+      - name: Build archive (unsigned)
+        run: |
+          set -o pipefail
+          mkdir -p "$OUT_DIR"
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$OUT_DIR/NroNox.xcarchive" \
+            -derivedDataPath "$OUT_DIR/DerivedData" \
+            ONLY_ACTIVE_ARCH=NO \
+            ENABLE_BITCODE=NO \
+            ENABLE_USER_SCRIPT_SANDBOXING=NO \
+            ENABLE_MODULE_VERIFIER=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$OUT_DIR/build.log"
+
+      - name: Package unsigned IPA
+        run: |
+          set -e
+          APP_PATH=$(find "$OUT_DIR/NroNox.xcarchive/Products/Applications" -maxdepth 1 -name '*.app' -print -quit)
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::No .app bundle found in archive"
+            exit 1
+          fi
+          echo "App bundle: $APP_PATH"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Info.plist" || true
+
+          mkdir -p "$OUT_DIR/Payload"
+          cp -R "$APP_PATH" "$OUT_DIR/Payload/"
+          cd "$OUT_DIR"
+          /usr/bin/zip -qry "$IPA_NAME" Payload
+          du -h "$IPA_NAME"
+          /usr/bin/unzip -l "$IPA_NAME" | head -20
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NroNox-ipa-${{ github.run_number }}
+          path: ${{ env.OUT_DIR }}/NroNox.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: ${{ env.OUT_DIR }}/build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ipa-${{ github.run_number }}
+        run: |
+          gh release create "$TAG" "$OUT_DIR/$IPA_NAME" \
+            --title "Nro Nox IPA - build ${{ github.run_number }}" \
+            --notes "Unsigned IPA built from commit ${{ github.sha }} on $(date -u +%Y-%m-%dT%H:%MZ).
+
+          Ký (sign) bằng Sideloadly / AltStore / ESign trước khi cài lên iPhone." \
+          || gh release upload "$TAG" "$OUT_DIR/$IPA_NAME" --clobber
