@@ -21,7 +21,6 @@ jobs:
     env:
       PROJECT: Unity-iPhone.xcodeproj
       SCHEME: Unity-iPhone
-      OUT_DIR: ${{ runner.temp }}/out
       IPA_NAME: NroNox.ipa
 
     steps:
@@ -42,15 +41,16 @@ jobs:
       - name: Build archive (unsigned)
         run: |
           set -o pipefail
-          mkdir -p "$OUT_DIR"
+          OUT="$RUNNER_TEMP/out"
+          mkdir -p "$OUT"
           xcodebuild archive \
             -project "$PROJECT" \
             -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -archivePath "$OUT_DIR/NroNox.xcarchive" \
-            -derivedDataPath "$OUT_DIR/DerivedData" \
+            -archivePath "$OUT/NroNox.xcarchive" \
+            -derivedDataPath "$OUT/DerivedData" \
             ONLY_ACTIVE_ARCH=NO \
             ENABLE_BITCODE=NO \
             ENABLE_USER_SCRIPT_SANDBOXING=NO \
@@ -59,12 +59,13 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            2>&1 | tee "$OUT_DIR/build.log"
+            2>&1 | tee "$OUT/build.log"
 
       - name: Package unsigned IPA
         run: |
           set -e
-          APP_PATH=$(find "$OUT_DIR/NroNox.xcarchive/Products/Applications" -maxdepth 1 -name '*.app' -print -quit)
+          OUT="$RUNNER_TEMP/out"
+          APP_PATH=$(find "$OUT/NroNox.xcarchive/Products/Applications" -maxdepth 1 -name '*.app' -print -quit)
           if [ -z "$APP_PATH" ]; then
             echo "::error::No .app bundle found in archive"
             exit 1
@@ -73,9 +74,9 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Info.plist" || true
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Info.plist" || true
 
-          mkdir -p "$OUT_DIR/Payload"
-          cp -R "$APP_PATH" "$OUT_DIR/Payload/"
-          cd "$OUT_DIR"
+          mkdir -p "$OUT/Payload"
+          cp -R "$APP_PATH" "$OUT/Payload/"
+          cd "$OUT"
           /usr/bin/zip -qry "$IPA_NAME" Payload
           du -h "$IPA_NAME"
           /usr/bin/unzip -l "$IPA_NAME" | head -20
@@ -84,7 +85,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: NroNox-ipa-${{ github.run_number }}
-          path: ${{ env.OUT_DIR }}/NroNox.ipa
+          path: ${{ runner.temp }}/out/NroNox.ipa
           if-no-files-found: error
           retention-days: 30
 
@@ -93,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log-${{ github.run_number }}
-          path: ${{ env.OUT_DIR }}/build.log
+          path: ${{ runner.temp }}/out/build.log
           if-no-files-found: ignore
           retention-days: 14
 
@@ -103,9 +104,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ipa-${{ github.run_number }}
         run: |
-          gh release create "$TAG" "$OUT_DIR/$IPA_NAME" \
+          OUT="$RUNNER_TEMP/out"
+          gh release create "$TAG" "$OUT/$IPA_NAME" \
             --title "Nro Nox IPA - build ${{ github.run_number }}" \
-            --notes "Unsigned IPA built from commit ${{ github.sha }} on $(date -u +%Y-%m-%dT%H:%MZ).
+            --notes "Unsigned IPA built from commit ${{ github.sha }}.
 
-          Ký (sign) bằng Sideloadly / AltStore / ESign trước khi cài lên iPhone." \
-          || gh release upload "$TAG" "$OUT_DIR/$IPA_NAME" --clobber
+          Sign with Sideloadly / AltStore / ESign before installing on iPhone." \
+          || gh release upload "$TAG" "$OUT/$IPA_NAME" --clobber
