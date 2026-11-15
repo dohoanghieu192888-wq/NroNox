@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Xcode build output (repo root only - keep Il2CppOutputProject/IL2CPP/build/)
+/build/
+/DerivedData/
+*.xcarchive
+*.ipa
+*.dSYM
+*.dSYM.zip
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+
+# Unity
+*_BurstDebugInformation_DoNotShip/
+
+# Logs / temp
+*.log
