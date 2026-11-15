@@ -24,11 +24,40 @@ jobs:
       IPA_NAME: NroNox.ipa
 
     steps:
-      - name: Checkout (with Git LFS)
+      - name: Checkout (LFS pointers only)
         uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
           fetch-depth: 1
+
+      # The 3 static libs in Libraries/ are ~260 MB of Git LFS data.
+      # Cache them so repeat builds do not consume the monthly LFS bandwidth quota.
+      - name: Compute static-lib cache key
+        id: lfskey
+        run: |
+          KEY=$(cat Libraries/*.a | shasum -a 256 | cut -d' ' -f1)
+          echo "key=nro-lfs-libs-$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Restore static libraries from cache
+        id: lfslibs
+        uses: actions/cache/restore@v4
+        with:
+          path: Libraries/*.a
+          key: ${{ steps.lfskey.outputs.key }}
+
+      - name: Pull static libraries via Git LFS
+        if: steps.lfslibs.outputs.cache-hit != 'true'
+        run: |
+          git lfs install --local
+          git lfs pull --include="Libraries/*.a"
+          ls -lh Libraries/*.a
+
+      - name: Save static libraries to cache
+        if: steps.lfslibs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: Libraries/*.a
+          key: ${{ steps.lfskey.outputs.key }}
 
       - name: Toolchain info
         run: |
